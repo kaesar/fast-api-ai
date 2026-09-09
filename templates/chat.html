@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Chat OAuth + LLM</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:44rem;margin:2rem auto;padding:0 1rem;color:#111}
+#log{border:1px solid #ddd;border-radius:.5rem;padding:1rem;min-height:12rem;max-height:28rem;overflow-y:auto;margin:1rem 0}
+.msg{margin:.5rem 0;padding:.5rem .7rem;border-radius:.5rem}
+.user{background:#e8f0fe;text-align:right}
+.assistant{background:#f1f3f4}
+.meta{color:#555;font-size:.85rem}
+.row{display:flex;gap:.5rem}
+textarea{flex:1;font-size:1rem;padding:.5rem}
+button{font-size:1rem;padding:.5rem .9rem;cursor:pointer}
+</style>
+</head>
+<body>
+<h1>Chat (OAuth XID + LLM)</h1>
+<p class="meta" id="status">Comprobando sesión…</p>
+<p>
+  <a href="/login" id="loginBtn"><button type="button">Iniciar sesión con XID</button></a>
+  <a href="/logout"><button type="button">Cerrar sesión</button></a>
+  <span class="meta" id="llmInfo"></span>
+</p>
+<div id="log"></div>
+<div class="row">
+  <textarea id="prompt" rows="3" placeholder="Escribe tu mensaje…"></textarea>
+  <button id="send" type="button">Enviar</button>
+</div>
+<p class="meta">Protegido: solo usuarios autenticados pueden usar /chat. Modelo: <span id="model"></span></p>
+
+<script>
+async function refreshMe(){
+  const r = await fetch('/me');
+  const j = await r.json();
+  const st = document.getElementById('status');
+  if(j.authenticated){
+    st.textContent = 'Sesión: ' + (j.user.email || j.user.sub);
+    document.getElementById('loginBtn').style.display = 'none';
+  } else {
+    st.textContent = 'No autenticado. Pulsa "Iniciar sesión con XID".';
+    document.getElementById('loginBtn').style.display = '';
+  }
+  document.getElementById('model').textContent = j.llm.model + ' (' + j.llm.provider + ')';
+  document.getElementById('llmInfo').textContent = '';
+}
+function addMsg(role, text){
+  const div = document.createElement('div');
+  div.className = 'msg ' + role;
+  div.textContent = text;
+  document.getElementById('log').appendChild(div);
+  div.scrollIntoView();
+}
+document.getElementById('send').onclick = async () => {
+  const ta = document.getElementById('prompt');
+  const prompt = ta.value.trim();
+  if(!prompt) return;
+  addMsg('user', prompt);
+  ta.value = '';
+  addMsg('assistant', '…');
+  const log = document.getElementById('log');
+  try{
+    const r = await fetch('/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({prompt})});
+    const j = await r.json();
+    log.lastChild.remove();
+    if(!r.ok){ addMsg('assistant', 'Error: ' + (j.detail || r.status)); return; }
+    addMsg('assistant', j.reply);
+  }catch(e){ log.lastChild.remove(); addMsg('assistant', 'Error de red: ' + e); }
+};
+refreshMe();
+</script>
+</body>
+</html>

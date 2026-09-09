@@ -1,0 +1,28 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Entornos virtuales ---
+venv/
+.venv/
+env/
+ENV/
+
+# --- Secretos y entorno local (ver .env.example) ---
+.env
+!.env.example
+
+# --- Logs y temporales ---
+*.log
+/tmp/
+
+# --- macOS / IDE ---
+.DS_Store
+.vscode/
+.idea/
+*.swp
+plan*.md
