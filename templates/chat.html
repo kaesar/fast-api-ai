@@ -4,72 +4,125 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Chat OAuth + LLM</title>
+<script type="module" src="/static/cui/onmind-cui-v3.js"></script>
 <style>
 body{font-family:system-ui,sans-serif;max-width:44rem;margin:2rem auto;padding:0 1rem;color:#111}
 #log{border:1px solid #ddd;border-radius:.5rem;padding:1rem;min-height:12rem;max-height:28rem;overflow-y:auto;margin:1rem 0}
 .msg{margin:.5rem 0;padding:.5rem .7rem;border-radius:.5rem}
 .user{background:#e8f0fe;text-align:right}
 .assistant{background:#f1f3f4}
+.typing span{display:inline-block;width:.5rem;height:.5rem;margin-right:.25rem;border-radius:50%;background:#555;opacity:.25;animation:blink 1.2s infinite}
+.typing span:nth-child(2){animation-delay:.2s}
+.typing span:nth-child(3){animation-delay:.4s;margin-right:0}
+@keyframes blink{0%,60%,100%{opacity:.25;transform:translateY(0)}30%{opacity:1;transform:translateY(-3px)}}
 .meta{color:#555;font-size:.85rem}
-.row{display:flex;gap:.5rem}
-textarea{flex:1;font-size:1rem;padding:.5rem}
-button{font-size:1rem;padding:.5rem .9rem;cursor:pointer}
+.row{display:flex;flex-direction:column;gap:.5rem}
+.row > button, .row > as-button{align-self:flex-end}
+#prompt, as-text#prompt{width:100%;box-sizing:border-box}
+textarea#prompt{font-size:1rem;padding:.5rem}
 </style>
 </head>
 <body>
-<h1>Chat (OAuth XID + LLM)</h1>
+<h1>Chat + OAuth2/OnMind-XID + OpenAI-API</h1>
 <p class="meta" id="status">Comprobando sesión…</p>
 <p>
-  <a href="/login" id="loginBtn"><button type="button">Iniciar sesión con XID</button></a>
-  <a href="/logout"><button type="button">Cerrar sesión</button></a>
+  <a href="/login" id="loginBtn"><as-button id="loginCui" label="Iniciar sesión con XID" variant="primary"></as-button></a>
+  <a href="/logout"><as-button label="Cerrar sesión"></as-button></a>
   <span class="meta" id="llmInfo"></span>
 </p>
 <div id="log"></div>
 <div class="row">
-  <textarea id="prompt" rows="3" placeholder="Escribe tu mensaje…"></textarea>
-  <button id="send" type="button">Enviar</button>
+  <as-text id="prompt" rows="3" placeholder="Escribe tu mensaje…"></as-text>
+  <as-button id="send" label="Enviar" variant="primary"></as-button>
 </div>
-<p class="meta">Protegido: solo usuarios autenticados pueden usar /chat. Modelo: <span id="model"></span></p>
+<p class="meta">Modelo: <span id="model"></span></p>
 
 <script>
-async function refreshMe(){
-  const r = await fetch('/me');
-  const j = await r.json();
-  const st = document.getElementById('status');
-  if(j.authenticated){
-    st.textContent = 'Sesión: ' + (j.user.email || j.user.sub);
-    document.getElementById('loginBtn').style.display = 'none';
-  } else {
-    st.textContent = 'No autenticado. Pulsa "Iniciar sesión con XID".';
-    document.getElementById('loginBtn').style.display = '';
+// Puente CUI (mismo patrón que OnMind-XID):
+// - `as-text` expone el valor vía evento `value-changed` (detail.value).
+// - `as-button` emite `button-tap`.
+// - Fallback: si el bundle no carga, se sustituyen por textarea/button nativos.
+(function(){
+  var promptValue = '';
+  var promptEl = document.getElementById('prompt');
+  var sendEl = document.getElementById('send');
+
+  function fallback() {
+    var ta = document.createElement('textarea');
+    ta.id = 'prompt'; ta.rows = 3; ta.placeholder = 'Escribe tu mensaje…';
+    ta.value = promptValue;
+    ta.addEventListener('input', function(){ promptValue = ta.value; });
+    promptEl.replaceWith(ta);
+    promptEl = ta;
+    document.querySelectorAll('as-button').forEach(function(el){
+      var b = document.createElement('button');
+      b.type = 'button'; b.textContent = el.getAttribute('label') || 'Enviar';
+      if (el.id) b.id = el.id;
+      el.replaceWith(b);
+      if (b.id === 'send') sendEl = b;
+    });
+    sendEl.addEventListener('click', send);
   }
-  document.getElementById('model').textContent = j.llm.model + ' (' + j.llm.provider + ')';
-  document.getElementById('llmInfo').textContent = '';
-}
-function addMsg(role, text){
-  const div = document.createElement('div');
-  div.className = 'msg ' + role;
-  div.textContent = text;
-  document.getElementById('log').appendChild(div);
-  div.scrollIntoView();
-}
-document.getElementById('send').onclick = async () => {
-  const ta = document.getElementById('prompt');
-  const prompt = ta.value.trim();
-  if(!prompt) return;
-  addMsg('user', prompt);
-  ta.value = '';
-  addMsg('assistant', '…');
-  const log = document.getElementById('log');
-  try{
-    const r = await fetch('/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({prompt})});
+  function ready() {
+    var ok = window.customElements && customElements.get('as-text') && customElements.get('as-button');
+    if (!ok) { fallback(); return; }
+    promptEl.addEventListener('value-changed', function(e){ promptValue = (e.detail && e.detail.value) || ''; });
+    sendEl.addEventListener('button-tap', send);
+    // login/logout son enlaces: el tap debe navegar igual que un click
+    document.querySelectorAll('a > as-button').forEach(function(el){
+      el.addEventListener('button-tap', function(){ el.parentElement.click(); });
+    });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function(){ setTimeout(ready, 400); });
+  else setTimeout(ready, 400);
+
+  async function refreshMe(){
+    const r = await fetch('/me');
     const j = await r.json();
-    log.lastChild.remove();
-    if(!r.ok){ addMsg('assistant', 'Error: ' + (j.detail || r.status)); return; }
-    addMsg('assistant', j.reply);
-  }catch(e){ log.lastChild.remove(); addMsg('assistant', 'Error de red: ' + e); }
-};
-refreshMe();
+    const st = document.getElementById('status');
+    if(j.authenticated){
+      st.textContent = 'Sesión: ' + (j.user.email || j.user.sub);
+      document.getElementById('loginBtn').style.display = 'none';
+    } else {
+      st.textContent = 'No autenticado. Pulsa "Iniciar sesión con XID".';
+      document.getElementById('loginBtn').style.display = '';
+    }
+    document.getElementById('model').textContent = j.llm.model + ' (' + j.llm.provider + ')';
+    document.getElementById('llmInfo').textContent = '';
+  }
+  function addMsg(role, text){
+    const div = document.createElement('div');
+    div.className = 'msg ' + role;
+    div.textContent = text;
+    document.getElementById('log').appendChild(div);
+    div.scrollIntoView();
+  }
+  function addTyping(){
+    const div = document.createElement('div');
+    div.className = 'msg assistant typing';
+    div.innerHTML = '<span></span><span></span><span></span>';
+    document.getElementById('log').appendChild(div);
+    div.scrollIntoView();
+  }
+  async function send(){
+    var prompt = (promptValue || '').trim();
+    if(!prompt) return;
+    addMsg('user', prompt);
+    promptValue = '';
+    if (promptEl.tagName === 'TEXTAREA') promptEl.value = '';
+    else promptEl.setAttribute('value', '');
+    addTyping();
+    const log = document.getElementById('log');
+    try{
+      const r = await fetch('/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({prompt})});
+      const j = await r.json();
+      log.lastChild.remove();
+      if(!r.ok){ addMsg('assistant', 'Error: ' + (j.detail || r.status)); return; }
+      addMsg('assistant', j.reply);
+    }catch(e){ log.lastChild.remove(); addMsg('assistant', 'Error de red: ' + e); }
+  }
+  refreshMe();
+})();
 </script>
 </body>
 </html>

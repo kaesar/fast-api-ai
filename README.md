@@ -1,128 +1,113 @@
 # Fast-API-AI
 
-> WebApp on Python/FastAPI + OpenAI/Ollama + OAuth (OnMind-XID/Entra-ID)
+> Chat WebApp on Python/FastAPI + OpenAI/Ollama + OAuth (OnMind-XID/Entra-ID)
 
-App de ejemplo con FastAPI mínima que autentica vía **OnMind-XID** (simulando Entra ID)
-y expone un chat protegido que llama al LLM.  
-Por defecto usa **Ollama local** (`gemma4:e4b-mlx`) vía endpoint compatible
-OpenAI; cambiando `LLM_PROVIDER=openai` usa la **OpenAI API** (`gpt-4o-mini`).
+Minimal FastAPI sample app that authenticates via [**OnMind-XID**](https://github.com/kaesar/onmind-xid) (simulating Entra ID)
+and exposes a protected chat that calls the LLM.  
+By default it uses local **Ollama** (`gemma4:e4b-mlx`) via an OpenAI-compatible
+endpoint; setting `LLM_PROVIDER=openai` switches to the **OpenAI API** (`gpt-4o-mini`).
 
-## Estructura
+## Structure
 
 ```bash
 ./
-├── main.py               # FastAPI + SessionMiddleware, incluye router
-├── router.py             # agregador: views + auth + chat
+├── main.py               # FastAPI + SessionMiddleware, includes router
+├── router.py             # to manage: views + auth + chat
 ├── endpoints/
-│   ├── views.py          # GET / (chat HTML) + GET /health
+│   ├── views.py          # GET / (HTML chat) + GET /health
 │   ├── auth.py           # /login, /auth/callback, /me, /logout
-│   └── chat.py           # POST /chat (protegido)
+│   └── chat.py           # POST /chat (protected)
 ├── app/
-│   ├── config.py         # env + URLs derivadas del facade Entra
-│   ├── auth.py           # PKCE, authorize/token/userinfo, sesión
-│   └── llm_client.py     # SDK openai contra Ollama u OpenAI
-├── templates/chat.html
+│   ├── config.py         # env + URLs derived from the Entra facade
+│   ├── auth.py           # PKCE, authorize/token/userinfo, session
+│   └── llm_client.py     # openai SDK against Ollama or OpenAI
+├── templates/chat.html   # chat UI with CUI as-button/as-text + native fallback
+├── static/cui/onmind-cui-v3.js  # vendored OnMind-CUI bundle
 ├── scripts/test_oauth_flow.py
 └── requirements.txt
 ```
 
-## Flujo
+> The vendored bundle mirrors XID's `vendor/cui` pattern.
+<!-- `cp ../../ui/cui/dist/onmind-cui-v3.js static/cui/onmind-cui-v3.js` -->
+
+## Flow
 
 ```mermaid
 sequenceDiagram
-  participant U as Usuario
-  participant A as App FastAPI :8000
-  participant X as XID :8787 (facade Entra)
+  participant U as User
+  participant A as FastAPI app :8000
+  participant X as XID :8787 (Entra facade)
   participant L as LLM (Ollama / OpenAI)
   U->>A: GET /login
-  A->>A: state/nonce + PKCE verifier/challenge (sesión)
+  A->>A: state/nonce + PKCE verifier/challenge (session)
   A->>X: GET /xid/oauth2/v2.0/authorize?...&code_challenge=...
-  X->>U: form email → OTP (6 dígitos)
+  X->>U: email form → OTP (6 digits)
   U->>X: POST code
   X->>A: 302 /auth/callback?code=&state=
   A->>X: POST /token (code + code_verifier)
   X->>A: access/id/refresh
   A->>X: GET /userinfo (Bearer)
   X->>A: {sub, email, tid...}
-  A->>U: 302 / (sesión en cookie firmada)
+  A->>U: 302 / (session in signed cookie)
   U->>A: POST /chat {prompt}
   A->>L: chat.completions (OpenAI SDK)
   L->>A: reply
   A->>U: {reply}
 ```
 
-## Arranque
+## Getting started
 
-A continuación los pasos para inicar los servicios, teniendo ...
+Steps to start the services:
 
 ```bash
-# 1. OnMind-XID (email bob@example.com:abc123 en userbase.txt)
+# 1. OnMind-XID (email bob@example.com:abc123 in userbase.txt)
 git clone --depth 1 https://github.com/kaesar/onmind-xid.git xid
 cd xid && bun install && bun src/dev.js
 
-# 2. Esta app
+# 2. This app
 cd ../ai
 python3 -m venv venv && ./venv/bin/pip install -r requirements.txt
-cp .env.example .env   # revisa APP_SECRET_KEY; defaults ya apuntan a XID+Ollama
+cp .env.example .env   # review APP_SECRET_KEY; defaults already point to XID+Ollama
 ./venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8000
 ```
 
-> Ambos corren en la máquina, xid usa `http://localhost:8787`, app usa `http://localhost:8000`  
-> Inicia **Ollama** si usas modelo local (para simular **OpenAI API**)
+> xid serves on `http://localhost:8787`, app serves on `http://localhost:8000`  
+> Start **Ollama** if you use a local model (to simulate the **OpenAI API**)
 
-## Prueba
+## Try it
 
-1. Abre http://localhost:8000 → pulsa **Iniciar sesión con OnMind-XID**.
-2. Email `bob@example.com`, código `abc123` (dev key de `userbase.txt`,
-   sin Mailpit). Con `alice@example.com` el OTP llega a Mailpit `:8025`.
-3. Escribe un prompt → responde `gemma4:e4b-mlx` vía Ollama.
-4. `GET /me` muestra sesión + proveedor; `GET /logout` cierra sesión
-   (limpia cookie y pasa por logout de **OnMind-XID**).
+1. Open http://localhost:8000 → click **Sign in with OnMind-XID**.
+2. Email `bob@example.com`, code `abc123` (dev key from `userbase.txt`,
+   no Mailpit needed). With `alice@example.com` the OTP arrives at Mailpit `:8025`.
+3. Type a prompt → `gemma4:e4b-mlx` answers via Ollama.
+4. `GET /me` shows session + provider; `GET /logout` signs out
+   (clears cookie and goes through **OnMind-XID** logout).
 
-## Variables de entorno (lado app, ver `.env.example`)
+## Environment variables (app side, see `.env.example`)
 
-| Variable | Uso |
+| Variable | Usage |
 |---|---|
-| `APP_BASE_URL` / `APP_SECRET_KEY` | base pública + firma de cookie de sesión |
-| `XID_BASE_URL` / `XID_TENANT_ID` / `XID_CLIENT_ID` | `http://localhost:8787`, `xid`, `ai-ejercicio` (cliente público, sin secret) |
-| `XID_REDIRECT_ALLOWLIST` | **se configura en XID en prod** (`XID_REDIRECT_ALLOWLIST=http://localhost:8000/auth/callback,...`); en dev XID lo deja abierto |
+| `APP_BASE_URL` / `APP_SECRET_KEY` | public base + session cookie signing |
+| `XID_BASE_URL` / `XID_TENANT_ID` / `XID_CLIENT_ID` | `http://localhost:8787`, `xid`, `ai-ejercicio` (public client, no secret) |
+| `XID_REDIRECT_ALLOWLIST` | **configured on XID in prod** (`XID_REDIRECT_ALLOWLIST=http://localhost:8000/auth/callback,...`); in dev XID leaves it open |
 | `LLM_PROVIDER` | `ollama` \| `openai` |
 | `OLLAMA_BASE_URL` / `OLLAMA_MODEL` | `http://localhost:11434/v1`, `gemma4:e4b-mlx` |
-| `OPENAI_API_KEY` / `OPENAI_MODEL` | solo si `LLM_PROVIDER=openai` |
+| `OPENAI_API_KEY` / `OPENAI_MODEL` | only if `LLM_PROVIDER=openai` |
 
 ## Endpoints
 
-| Método | Ruta | Descripción |
+| Method | Route | Description |
 |---|---|---|
-| `GET` | `/` | UI chat (HTML+JS) |
-| `GET` | `/login` | redirige a XID authorize (PKCE S256) |
-| `GET` | `/auth/callback` | code→tokens→userinfo, guarda sesión |
-| `GET` | `/me` | estado sesión + info LLM |
-| `POST` | `/chat` | `{prompt}` → LLM (401 si no autenticado) |
-| `GET` | `/logout` | limpia sesión + logout XID |
-| `GET` | `/health` | salud + proveedor/modelo |
+| `GET` | `/` | chat UI (HTML+JS) |
+| `GET` | `/login` | redirects to XID authorize (PKCE S256) |
+| `GET` | `/auth/callback` | code→tokens→userinfo, stores session |
+| `GET` | `/me` | session state + LLM info |
+| `POST` | `/chat` | `{prompt}` → LLM (401 if unauthenticated) |
+| `GET` | `/logout` | clears session + XID logout |
+| `GET` | `/health` | health + provider/model |
 
 ## Smoke test
 
 ```bash
 ./venv/bin/python scripts/test_oauth_flow.py
-# OK xid-discovery / xid-jwks / xid-authorize-vivo / ollama-modelo / app-health
-```
-
-## Estructura
-
-```
-├── main.py               # FastAPI + SessionMiddleware, incluye router
-├── router.py             # agregador: views + auth + chat
-├── endpoints/
-│   ├── views.py          # GET / (chat HTML) + GET /health
-│   ├── auth.py           # /login, /auth/callback, /me, /logout
-│   └── chat.py           # POST /chat (protegido)
-├── app/
-│   ├── config.py         # env + URLs derivadas del facade Entra
-│   ├── auth.py           # PKCE, authorize/token/userinfo, sesión
-│   └── llm_client.py     # SDK openai contra Ollama u OpenAI
-├── templates/chat.html
-├── scripts/test_oauth_flow.py
-└── requirements.txt
 ```
